@@ -1,6 +1,5 @@
 import psycopg2
 import pandas as pd
-import yfinance as yf
 import os
 from datetime import timedelta
 
@@ -35,31 +34,41 @@ data["Datetime"] = data["Datetime"].dt.tz_localize(None)
 # ===== FUNCTION =====
 def evaluate(row):
     try:
-        signal_time = pd.to_datetime(row["timestamp"]).tz_localize(None)
+        signal_time = pd.to_datetime(row["timestamp"])
 
-        future_time = signal_time + timedelta(minutes=30)
+        signal_date = signal_time.date()
 
-        # find nearest time instead of exact match
-        entry_row = data.iloc[(data["Datetime"] - signal_time).abs().argsort()[:1]]
-        exit_row = data.iloc[(data["Datetime"] - future_time).abs().argsort()[:1]]
+        entry_candidates = data[data["Datetime"].dt.date >= signal_date]
 
-        entry = entry_row.iloc[0]["Close"]
-        exit_price = exit_row.iloc[0]["Close"]
+        if entry_candidates.empty:
+            return "UNKNOWN", 0
+
+        entry_row = entry_candidates.iloc[0]
+
+        exit_candidates = data[data["Datetime"].dt.date > entry_row["Datetime"].date()]
+
+        if exit_candidates.empty:
+            return "UNKNOWN", 0
+
+        exit_row = exit_candidates.iloc[0]
+
+        entry = entry_row["Close"]
+        exit_price = exit_row["Close"]
+
+        change = float((exit_price - entry) / entry)
+
+        if row["option_type"] == "PE":
+            change = -change
+
+        if change > 0.003:
+            return "WIN", change
+        elif change < -0.003:
+            return "LOSS", change
+        else:
+            return "NEUTRAL", change
 
     except Exception:
         return "UNKNOWN", 0
-
-    change = (exit_price - entry) / entry
-
-    if row["option_type"] == "PE":
-        change = -change
-
-    if change > 0.003:
-        return "WIN", change
-    elif change < -0.003:
-        return "LOSS", change
-    else:
-        return "NEUTRAL", change
 
 # ===== APPLY =====
 results = df.apply(evaluate, axis=1)
