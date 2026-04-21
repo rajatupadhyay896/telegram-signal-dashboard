@@ -15,7 +15,10 @@ groups = [
     "zero_hero_calls_sensex_index",
     "tradingadda11",
     "equity_trader_india",
-    "Nifty_and_banknifty_intraday_5"
+    "Nifty_and_banknifty_intraday_5",
+    "https://t.me/NISMINDIA",
+    "https://t.me/rajat9550",
+    "https://t.me/nifty_hunt_index"
 ]
 
 client = TelegramClient("session", api_id, api_hash)
