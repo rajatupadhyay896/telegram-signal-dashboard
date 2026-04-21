@@ -1,141 +1,84 @@
-import streamlit as st
-import pandas as pd
 import psycopg2
+import pandas as pd
+import yfinance as yf
 import os
+from datetime import timedelta
 
-# ===== PAGE CONFIG =====
-st.set_page_config(page_title="Telegram Signal Dashboard", layout="wide")
+DB_URL = os.getenv("DB_URL")
 
-st.title("📊 Telegram Signal Quality Dashboard")
+conn = psycopg2.connect(DB_URL)
 
-st.markdown("""
-### 📌 Core Finding
-
-Most Telegram trading groups generate **high-frequency but low-quality signals**,  
-making them unreliable for systematic trading.
-""")
-
-# ===== TIME FILTER =====
-time_option = st.selectbox(
-    "📅 Select Time Window",
-    ["7 days", "14 days", "30 days", "90 days", "All time"]
-)
-
-# ===== LOAD DATA (NO STALE CONNECTION) =====
-def load_data(option):
-    db_url = os.getenv("DB_URL")
-
-    if not db_url:
-        st.error("DB_URL not set")
-        st.stop()
-
-    conn = psycopg2.connect(db_url)
-
-    if option == "All time":
-        query = "SELECT * FROM signals"
-    else:
-        days = int(option.split()[0])
-        query = f"""
-            SELECT *
-            FROM signals
-            WHERE timestamp >= NOW() - INTERVAL '{days} days'
-        """
-
-    df = pd.read_sql(query, conn)
-    conn.close()
-
-    return df
-
-df = load_data(time_option)
+# ===== LOAD SIGNALS =====
+df = pd.read_sql("""
+SELECT id, timestamp, option_type
+FROM signals
+WHERE result IS NULL
+""", conn)
 
 if df.empty:
-    st.warning("No data found")
-    st.stop()
+    print("No new signals")
+    exit()
 
-# ===== SCORING =====
-def score_signal(row):
-    score = 0
-    if row["option_type"] in ["CE", "PE"]:
-        score += 2
-    if pd.notna(row["strike"]):
-        score += 2
-    if row.get("has_target"):
-        score += 2
-    if row.get("has_sl"):
-        score += 3
-    if row.get("is_buy") or row.get("is_sell"):
-        score += 1
-    return score
+# ===== GET PRICE DATA =====
+data = yf.download("^NSEI", period="5d", interval="5m")
+data.reset_index(inplace=True)
 
-df["score"] = df.apply(score_signal, axis=1)
-df["is_good"] = df["score"] >= 7
+# normalize datetime
+if "Datetime" not in data.columns:
+    data.rename(columns={"Date": "Datetime"}, inplace=True)
 
-# ===== GROUP METRICS =====
-avg_score = df.groupby("group_name")["score"].mean()
-quality_ratio = df.groupby("group_name")["is_good"].mean()
-group_counts = df.groupby("group_name").size()
+data["Datetime"] = pd.to_datetime(data["Datetime"])
 
-if time_option == "All time":
-    frequency = group_counts / 30
-else:
-    days = int(time_option.split()[0])
-    frequency = group_counts / days
+# 🔥 FIX: remove timezone for comparison
+data["Datetime"] = data["Datetime"].dt.tz_localize(None)
 
-# NORMALIZE
-normalized_score = avg_score / 10
-frequency_norm = frequency / frequency.max()
+# ===== FUNCTION =====
+def evaluate(row):
+    try:
+        signal_time = pd.to_datetime(row["timestamp"]).tz_localize(None)
 
-# FINAL SCORE
-final_score = (
-    (0.6 * quality_ratio) +
-    (0.3 * normalized_score) +
-    (0.1 * frequency_norm)
-).sort_values(ascending=False)
+        future_time = signal_time + timedelta(minutes=30)
 
-summary = pd.DataFrame({
-    "avg_score": avg_score,
-    "quality_ratio": quality_ratio,
-    "frequency_per_day": frequency,
-    "final_score": final_score
-}).sort_values("final_score", ascending=False)
+        # find nearest time instead of exact match
+        entry_row = data.iloc[(data["Datetime"] - signal_time).abs().argsort()[:1]]
+        exit_row = data.iloc[(data["Datetime"] - future_time).abs().argsort()[:1]]
 
-# ===== METRICS =====
-col1, col2, col3, col4 = st.columns(4)
+        entry = entry_row.iloc[0]["Close"]
+        exit_price = exit_row.iloc[0]["Close"]
 
-col1.metric("🏆 Top Group", final_score.index[0])
-col2.metric("⭐ Best Score", round(final_score.iloc[0], 3))
-col3.metric("📊 Total Groups", len(final_score))
-col4.metric("⚠️ Lowest Quality Group", final_score.index[-1])
+    except Exception:
+        return "UNKNOWN", 0
 
-st.markdown("---")
+    change = (exit_price - entry) / entry
 
-st.warning(
-    "⚠️ High-frequency groups often produce lower-quality signals, "
-    "indicating noise rather than structured trades."
-)
+    if row["option_type"] == "PE":
+        change = -change
 
-# ===== CHART =====
-st.subheader("📈 Signal Performance Comparison")
-st.bar_chart(final_score)
+    if change > 0.003:
+        return "WIN", change
+    elif change < -0.003:
+        return "LOSS", change
+    else:
+        return "NEUTRAL", change
 
-# ===== TABLE =====
-st.subheader("📋 Detailed Breakdown")
-st.dataframe(summary)
+# ===== APPLY =====
+results = df.apply(evaluate, axis=1)
 
-# ===== DEEP DIVE =====
-st.subheader("🔍 Group Deep Dive")
+df["result"] = results.apply(lambda x: x[0])
+df["pnl"] = results.apply(lambda x: x[1])
 
-group = st.selectbox("Select Group", summary.index)
+# ===== UPDATE DB =====
+cursor = conn.cursor()
 
-if group:
-    data = summary.loc[group]
+for _, row in df.iterrows():
+    cursor.execute("""
+        UPDATE signals
+        SET result = %s, pnl = %s
+        WHERE id = %s
+    """, (row["result"], row["pnl"], row["id"]))
 
-    c1, c2, c3, c4 = st.columns(4)
+conn.commit()
+cursor.close()
+conn.close()
 
-    c1.metric("Avg Score", round(data["avg_score"], 2))
-    c2.metric("Quality Ratio", round(data["quality_ratio"], 2))
-    c3.metric("Signals/Day", round(data["frequency_per_day"], 2))
-    c4.metric("Final Score", round(data["final_score"], 3))
-
-st.markdown("---")
-st.caption("Live DB | Python | PostgreSQL | Streamlit")
+print("PTS updated (fixed)")

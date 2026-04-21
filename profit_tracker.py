@@ -4,14 +4,10 @@ import yfinance as yf
 import os
 from datetime import timedelta
 
-# ===== DB =====
 DB_URL = os.getenv("DB_URL")
-if not DB_URL:
-    raise Exception("DB_URL not set")
-
 conn = psycopg2.connect(DB_URL)
 
-# ===== LOAD SIGNALS (only unevaluated) =====
+# ===== LOAD SIGNALS =====
 df = pd.read_sql("""
 SELECT id, timestamp, option_type
 FROM signals
@@ -19,55 +15,65 @@ WHERE result IS NULL
 """, conn)
 
 if df.empty:
-    print("No new signals to evaluate")
-    conn.close()
+    print("No new signals")
     exit()
 
-# ===== FETCH MARKET DATA (NIFTY proxy) =====
-data = yf.download("^NSEI", period="5d", interval="5m")
+# ===== GET DAILY DATA (KEY FIX) =====
+data = yf.download("^NSEI", period="6mo", interval="1d")
 data.reset_index(inplace=True)
 
-# Normalize column name
-if "Datetime" not in data.columns:
-    if "Date" in data.columns:
-        data.rename(columns={"Date": "Datetime"}, inplace=True)
-
+data.rename(columns={"Date": "Datetime"}, inplace=True)
 data["Datetime"] = pd.to_datetime(data["Datetime"])
 
-# ===== EVALUATION FUNCTION =====
+# ===== FUNCTION =====
 def evaluate(row):
-    t = pd.to_datetime(row["timestamp"])
-    future_t = t + timedelta(minutes=30)
-
     try:
-        entry_row = data[data["Datetime"] >= t].iloc[0]
-        exit_row = data[data["Datetime"] >= future_t].iloc[0]
-    except Exception:
-        return "UNKNOWN", 0.0
+        signal_time = pd.to_datetime(row["timestamp"])
 
-    entry = entry_row["Close"]
-    exit_price = exit_row["Close"]
+        # convert UTC → date
+        signal_date = signal_time.date()
 
-    change = (exit_price - entry) / entry
+        # find closest day
+        entry_candidates = data[data["Datetime"].dt.date >= signal_date]
 
-    # If PE, inverse logic
-    if row["option_type"] == "PE":
-        change = -change
+        if entry_candidates.empty:
+            return "UNKNOWN", 0
 
-    # Thresholds
-    if change > 0.005:
-        return "WIN", float(change)
-    elif change < -0.005:
-        return "LOSS", float(change)
-    else:
-        return "NEUTRAL", float(change)
+        entry_row = entry_candidates.iloc[0]
+
+        # exit next day
+        exit_candidates = data[data["Datetime"].dt.date > entry_row["Datetime"].date()]
+
+        if exit_candidates.empty:
+            return "UNKNOWN", 0
+
+        exit_row = exit_candidates.iloc[0]
+
+        entry = entry_row["Close"]
+        exit_price = exit_row["Close"]
+
+        change = (exit_price - entry) / entry
+
+        if row["option_type"] == "PE":
+            change = -change
+
+        if change > 0.003:
+            return "WIN", change
+        elif change < -0.003:
+            return "LOSS", change
+        else:
+            return "NEUTRAL", change
+
+    except:
+        return "UNKNOWN", 0
 
 # ===== APPLY =====
 results = df.apply(evaluate, axis=1)
+
 df["result"] = results.apply(lambda x: x[0])
 df["pnl"] = results.apply(lambda x: x[1])
 
-# ===== UPDATE DB =====
+# ===== UPDATE =====
 cursor = conn.cursor()
 
 for _, row in df.iterrows():
@@ -75,10 +81,10 @@ for _, row in df.iterrows():
         UPDATE signals
         SET result = %s, pnl = %s
         WHERE id = %s
-    """, (row["result"], row["pnl"], int(row["id"])))
+    """, (row["result"], row["pnl"], row["id"]))
 
 conn.commit()
 cursor.close()
 conn.close()
 
-print("PTS updated")
+print("PTS updated (DAILY MODE)")

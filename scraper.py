@@ -20,14 +20,14 @@ groups = [
 
 client = TelegramClient("session", api_id, api_hash)
 
-# ===== DB CONNECTION FUNCTION =====
+# ===== DB CONNECTION =====
 def get_connection():
     db_url = os.getenv("DB_URL")
     if not db_url:
         raise Exception("DB_URL not set")
     return psycopg2.connect(db_url)
 
-# ===== EXTRACT STRIKE + CE/PE =====
+# ===== PARSE STRIKE + CE/PE =====
 def extract_trade_info(text):
     text = text.upper()
 
@@ -57,7 +57,7 @@ def detect_flags(text):
         "is_sell": ("SELL" in text)
     }
 
-# ===== INSERT FUNCTION =====
+# ===== INSERT =====
 def insert_signal(cursor, row):
     cursor.execute("""
         INSERT INTO signals (
@@ -79,14 +79,14 @@ def insert_signal(cursor, row):
         row["is_sell"]
     ))
 
-# ===== MAIN SCRAPER FUNCTION =====
+# ===== SCRAPER =====
 async def scrape():
     conn = get_connection()
     cursor = conn.cursor()
 
     await client.start()
 
-    # timezone-safe cutoff (last 1 hour)
+    # last 1 hour only (keeps it fast)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for group in groups:
@@ -100,7 +100,6 @@ async def scrape():
                 if not message.text:
                     continue
 
-                # stop when messages are older than cutoff
                 if message.date < cutoff:
                     break
 
@@ -134,18 +133,17 @@ async def scrape():
 
     print("DB UPDATED")
 
-# ===== CONTINUOUS LOOP =====
+# ===== MAIN LOOP (FIXED) =====
 def run_forever():
     while True:
         try:
-            with client:
-                client.loop.run_until_complete(scrape())
+            asyncio.run(scrape())
         except Exception as e:
             print("CRASH:", e)
 
         print("Sleeping 15 minutes...")
         time.sleep(900)
 
-# ===== ENTRY POINT =====
+# ===== ENTRY =====
 if __name__ == "__main__":
     run_forever()
