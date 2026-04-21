@@ -9,11 +9,24 @@ st.set_page_config(
 
 st.title("📊 Telegram Signal Quality Dashboard")
 
+# ===== INTRO =====
+st.markdown("""
+### 📌 What this shows
+This dashboard evaluates Telegram trading signals based on:
+
+- **Structure** (CE/PE, strike, targets)
+- **Risk management** (stop-loss presence)
+- **Consistency** (quality ratio)
+- **Activity** (signals per day)
+
+👉 The goal: Identify which groups provide *usable trading signals*, not just noise.
+""")
+
 # ===== LOAD DATA =====
 rankings = pd.read_csv("outputs/rankings.csv", index_col=0)
 details = pd.read_csv("outputs/detailed_rankings.csv", index_col=0)
 
-# ===== TOP METRICS =====
+# ===== METRICS =====
 col1, col2, col3 = st.columns(3)
 
 col1.metric("🏆 Top Group", rankings.index[0])
@@ -22,11 +35,26 @@ col3.metric("📊 Total Groups", len(rankings))
 
 st.markdown("---")
 
-# ===== 🔥 KEY INSIGHT =====
+# ===== INSIGHT =====
 st.warning(
     "⚠️ Insight: High-frequency Telegram trading groups often produce lower-quality signals, "
     "indicating noise rather than structured, risk-managed trades."
 )
+
+# ===== MODEL EXPLANATION =====
+st.info("""
+🧠 Scoring Model:
+- Direction (CE/PE): +2  
+- Strike clarity: +2  
+- Target: +2  
+- Stop-loss: +3 (highest weight)  
+- Buy/Sell clarity: +1  
+
+Final score combines:
+• Signal quality  
+• Consistency  
+• Frequency  
+""")
 
 # ===== CHART =====
 st.subheader("📈 Signal Performance Comparison")
