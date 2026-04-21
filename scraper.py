@@ -3,6 +3,7 @@ from telethon import TelegramClient
 import psycopg2
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 # ===== TELEGRAM CONFIG =====
@@ -19,14 +20,12 @@ groups = [
 
 client = TelegramClient("session", api_id, api_hash)
 
-# ===== DB CONNECTION =====
-DB_URL = os.getenv("DB_URL")
-
-if not DB_URL:
-    raise Exception("DB_URL not set")
-
-conn = psycopg2.connect(DB_URL)
-cursor = conn.cursor()
+# ===== DB CONNECTION FUNCTION =====
+def get_connection():
+    db_url = os.getenv("DB_URL")
+    if not db_url:
+        raise Exception("DB_URL not set")
+    return psycopg2.connect(db_url)
 
 # ===== EXTRACT STRIKE + CE/PE =====
 def extract_trade_info(text):
@@ -59,7 +58,7 @@ def detect_flags(text):
     }
 
 # ===== INSERT FUNCTION =====
-def insert_signal(row):
+def insert_signal(cursor, row):
     cursor.execute("""
         INSERT INTO signals (
             timestamp, group_name, message_text, user_id,
@@ -80,11 +79,14 @@ def insert_signal(row):
         row["is_sell"]
     ))
 
-# ===== MAIN SCRAPER =====
+# ===== MAIN SCRAPER FUNCTION =====
 async def scrape():
+    conn = get_connection()
+    cursor = conn.cursor()
+
     await client.start()
 
-    # FIXED: timezone-aware cutoff
+    # timezone-safe cutoff (last 1 hour)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
 
     for group in groups:
@@ -98,7 +100,7 @@ async def scrape():
                 if not message.text:
                     continue
 
-                # FIXED: now both timezone-aware
+                # stop when messages are older than cutoff
                 if message.date < cutoff:
                     break
 
@@ -110,7 +112,7 @@ async def scrape():
                 flags = detect_flags(message.text)
 
                 row = {
-                    "timestamp": message.date,  # KEEP timezone-aware
+                    "timestamp": message.date,
                     "group_name": group,
                     "message_text": message.text,
                     "user_id": str(message.sender_id) if message.sender_id else None,
@@ -119,7 +121,7 @@ async def scrape():
                     **flags
                 }
 
-                insert_signal(row)
+                insert_signal(cursor, row)
 
                 await asyncio.sleep(0.2)
 
@@ -127,8 +129,23 @@ async def scrape():
             print("Error:", group, e)
 
     conn.commit()
+    cursor.close()
+    conn.close()
+
     print("DB UPDATED")
 
-# ===== RUN =====
-with client:
-    client.loop.run_until_complete(scrape())
+# ===== CONTINUOUS LOOP =====
+def run_forever():
+    while True:
+        try:
+            with client:
+                client.loop.run_until_complete(scrape())
+        except Exception as e:
+            print("CRASH:", e)
+
+        print("Sleeping 15 minutes...")
+        time.sleep(900)
+
+# ===== ENTRY POINT =====
+if __name__ == "__main__":
+    run_forever()
