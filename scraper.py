@@ -87,7 +87,7 @@ async def scrape():
     await client.start()
 
     # last 1 hour only (keeps it fast)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
     for group in groups:
         print("Scraping:", group)
