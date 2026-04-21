@@ -14,72 +14,74 @@ st.markdown("""
 
 Most Telegram trading groups generate **high-frequency but low-quality signals**,  
 making them unreliable for systematic trading.
-
-This dashboard evaluates signals using live database data.
 """)
 
 # ===== TIME FILTER =====
-days = st.selectbox("📅 Select Time Window", [7, 14, 30])
+time_option = st.selectbox(
+    "📅 Select Time Window",
+    ["7 days", "14 days", "30 days", "90 days", "All time"]
+)
 
 # ===== DB CONNECTION =====
 @st.cache_resource
 def get_connection():
     db_url = os.getenv("DB_URL")
-    if not db_url:
-        st.error("Database URL not set")
-        st.stop()
     return psycopg2.connect(db_url)
 
 conn = get_connection()
 
-# ===== LOAD DATA FROM DB =====
+# ===== LOAD DATA =====
 @st.cache_data(ttl=300)
-def load_data(days):
-    query = f"""
-        SELECT *
-        FROM signals
-        WHERE timestamp >= NOW() - INTERVAL '{days} days'
-    """
+def load_data(option):
+    if option == "All time":
+        query = "SELECT * FROM signals"
+    else:
+        days = int(option.split()[0])
+        query = f"""
+            SELECT *
+            FROM signals
+            WHERE timestamp >= NOW() - INTERVAL '{days} days'
+        """
     return pd.read_sql(query, conn)
 
-df = load_data(days)
+df = load_data(time_option)
 
-# ===== CHECK =====
 if df.empty:
-    st.warning("No data found in selected time window")
+    st.warning("No data found for selected range")
     st.stop()
 
-# ===== SCORING FUNCTION =====
+# ===== SCORING =====
 def score_signal(row):
     score = 0
-
     if row["option_type"] in ["CE", "PE"]:
         score += 2
-
     if pd.notna(row["strike"]):
         score += 2
-
     if row.get("has_target"):
         score += 2
-
     if row.get("has_sl"):
         score += 3
-
     if row.get("is_buy") or row.get("is_sell"):
         score += 1
-
     return score
 
-# APPLY SCORING
 df["score"] = df.apply(score_signal, axis=1)
 df["is_good"] = df["score"] >= 7
 
 # ===== GROUP METRICS =====
 avg_score = df.groupby("group_name")["score"].mean()
 quality_ratio = df.groupby("group_name")["is_good"].mean()
-frequency = df.groupby("group_name").size() / days
 
-# NORMALIZE
+# handle frequency safely
+group_counts = df.groupby("group_name").size()
+
+if time_option == "All time":
+    frequency = group_counts / 30  # normalize roughly
+else:
+    days = int(time_option.split()[0])
+    frequency = group_counts / days
+
+# normalize
 normalized_score = avg_score / 10
 frequency_norm = frequency / frequency.max()
 
@@ -90,7 +92,6 @@ final_score = (
     (0.1 * frequency_norm)
 ).sort_values(ascending=False)
 
-# SUMMARY TABLE
 summary = pd.DataFrame({
     "avg_score": avg_score,
     "quality_ratio": quality_ratio,
@@ -108,23 +109,10 @@ col4.metric("⚠️ Lowest Quality Group", final_score.index[-1])
 
 st.markdown("---")
 
-# ===== INSIGHT =====
 st.warning(
     "⚠️ High-frequency groups often produce lower-quality signals, "
-    "indicating noise rather than structured trading setups."
+    "indicating noise rather than structured trades."
 )
-
-# ===== MODEL =====
-st.info("""
-🧠 Scoring Model:
-- Direction: +2  
-- Strike: +2  
-- Target: +2  
-- Stop-loss: +3  
-- Buy/Sell: +1  
-
-Final score = quality + consistency + frequency
-""")
 
 # ===== CHART =====
 st.subheader("📈 Signal Performance Comparison")
@@ -134,7 +122,10 @@ st.bar_chart(final_score)
 st.subheader("📋 Detailed Breakdown")
 st.dataframe(summary)
 
-# ===== GROUP DEEP DIVE =====
+# ===== DEBUG (optional)
+st.write("Groups loaded:", df["group_name"].unique())
+
+# ===== DEEP DIVE =====
 st.subheader("🔍 Group Deep Dive")
 
 group = st.selectbox("Select Group", summary.index)
