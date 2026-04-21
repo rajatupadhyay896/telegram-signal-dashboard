@@ -23,7 +23,7 @@ if df.empty:
     st.warning("No data available")
     st.stop()
 
-# ===== SIDEBAR FILTERS =====
+# ===== SIDEBAR =====
 st.sidebar.header("Filters")
 
 groups = st.sidebar.multiselect(
@@ -34,7 +34,7 @@ groups = st.sidebar.multiselect(
 
 days = st.sidebar.slider("Last N Days", 1, 30, 7)
 
-# ===== APPLY FILTERS =====
+# ===== FILTER =====
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 df = df[
@@ -53,7 +53,7 @@ col3.metric("Latest Signal", str(df["timestamp"].max())[:19])
 st.subheader("📈 Signal Volume by Group")
 st.bar_chart(df["group_name"].value_counts())
 
-# ===== SIGNAL QUALITY SCORE =====
+# ===== QUALITY SCORE =====
 df["score"] = (
     df["option_type"].notna().astype(int) * 2 +
     df["strike"].notna().astype(int) * 2 +
@@ -67,23 +67,9 @@ quality = df.groupby("group_name")["score"].mean().sort_values(ascending=False)
 st.subheader("⭐ Signal Quality Score")
 st.bar_chart(quality)
 
-# ===== PTS (if exists) =====
-if "pnl" in df.columns and "result" in df.columns:
-
-    st.subheader("💰 Profit Tracking System")
-
-    pnl_summary = df.groupby("group_name")["pnl"].mean()
-    win_rate = df.groupby("group_name")["result"].apply(
-        lambda x: (x == "WIN").mean()
-    )
-
-    pts_df = pd.DataFrame({
-        "Win Rate": win_rate,
-        "Avg PnL": pnl_summary
-    }).sort_values("Avg PnL", ascending=False)
-
-    st.dataframe(pts_df)
-    st.bar_chart(pts_df["Avg PnL"])
+# ===== BEST GROUPS =====
+st.subheader("🏆 Top Groups (by Quality)")
+st.dataframe(quality.reset_index().rename(columns={"score": "avg_score"}))
 
 # ===== RECENT SIGNALS =====
 st.subheader("📋 Recent Signals")
