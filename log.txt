@@ -52,3 +52,56 @@ Scraping: zero_hero_calls_sensex_index
 Scraping: tradingadda11
 Scraping: Nifty_and_banknifty_intraday_5
 DATA INSERTED CLEAN
+Traceback (most recent call last):
+  File "/Users/user/Desktop/telegram_scraper/scraper.py", line 25, in <module>
+    conn = psycopg2.connect(DB_URL)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/__init__.py", line 121, in connect
+    dsn = _ext.make_dsn(dsn, **kwargs)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/extensions.py", line 145, in make_dsn
+    parse_dsn(dsn)
+    ~~~~~~~~~^^^^^
+psycopg2.ProgrammingError: invalid dsn: missing "=" after "PASTE_YOUR_REAL_NEON_URL_HERE" in connection info string
+
+Traceback (most recent call last):
+  File "/Users/user/Desktop/telegram_scraper/scraper.py", line 25, in <module>
+    conn = psycopg2.connect(DB_URL)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/__init__.py", line 121, in connect
+    dsn = _ext.make_dsn(dsn, **kwargs)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/extensions.py", line 145, in make_dsn
+    parse_dsn(dsn)
+    ~~~~~~~~~^^^^^
+psycopg2.ProgrammingError: invalid dsn: missing "=" after "export" in connection info string
+
+Traceback (most recent call last):
+  File "/Users/user/Desktop/telegram_scraper/scraper.py", line 25, in <module>
+    conn = psycopg2.connect(DB_URL)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "ep-floral-smoke-ann9y638-pooler.c-6.us-east-1.aws.neon.tech" (2600:1f18:700d:4211:7fef:e8e7:60f1:b2af), port 5432 failed: ERROR:  password authentication failed for user 'neondb_owner'
+
+Traceback (most recent call last):
+  File "/Users/user/Desktop/telegram_scraper/scraper.py", line 25, in <module>
+    conn = psycopg2.connect(DB_URL)
+  File "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/psycopg2/__init__.py", line 122, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+psycopg2.OperationalError: connection to server at "ep-floral-smoke-ann9y638-pooler.c-6.us-east-1.aws.neon.tech" (2600:1f18:700d:4211:7fef:e8e7:60f1:b2af), port 5432 failed: ERROR:  password authentication failed for user 'neondb_owner'
+
+/Users/user/Desktop/telegram_scraper/scraper.py:83: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  cutoff = datetime.utcnow() - timedelta(hours=1)
+Scraping: nifty_banknifty_zero_to_hero1
+Error: nifty_banknifty_zero_to_hero1 can't compare offset-naive and offset-aware datetimes
+Scraping: zero_hero_calls_sensex_index
+Error: zero_hero_calls_sensex_index can't compare offset-naive and offset-aware datetimes
+Scraping: tradingadda11
+Error: tradingadda11 can't compare offset-naive and offset-aware datetimes
+Scraping: equity_trader_india
+Error: equity_trader_india can't compare offset-naive and offset-aware datetimes
+Scraping: Nifty_and_banknifty_intraday_5
+Error: Nifty_and_banknifty_intraday_5 can't compare offset-naive and offset-aware datetimes
+DB UPDATED
+Scraping: nifty_banknifty_zero_to_hero1
+Scraping: zero_hero_calls_sensex_index
+Scraping: tradingadda11
+Scraping: equity_trader_india
+Scraping: Nifty_and_banknifty_intraday_5
+DB UPDATED

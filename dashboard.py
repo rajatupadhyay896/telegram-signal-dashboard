@@ -8,7 +8,6 @@ st.set_page_config(page_title="Telegram Signal Dashboard", layout="wide")
 
 st.title("📊 Telegram Signal Quality Dashboard")
 
-# ===== CORE INSIGHT =====
 st.markdown("""
 ### 📌 Core Finding
 
@@ -22,17 +21,16 @@ time_option = st.selectbox(
     ["7 days", "14 days", "30 days", "90 days", "All time"]
 )
 
-# ===== DB CONNECTION =====
-@st.cache_resource
-def get_connection():
-    db_url = os.getenv("DB_URL")
-    return psycopg2.connect(db_url)
-
-conn = get_connection()
-
-# ===== LOAD DATA =====
-@st.cache_data(ttl=300)
+# ===== LOAD DATA (NO STALE CONNECTION) =====
 def load_data(option):
+    db_url = os.getenv("DB_URL")
+
+    if not db_url:
+        st.error("DB_URL not set")
+        st.stop()
+
+    conn = psycopg2.connect(db_url)
+
     if option == "All time":
         query = "SELECT * FROM signals"
     else:
@@ -42,12 +40,16 @@ def load_data(option):
             FROM signals
             WHERE timestamp >= NOW() - INTERVAL '{days} days'
         """
-    return pd.read_sql(query, conn)
+
+    df = pd.read_sql(query, conn)
+    conn.close()
+
+    return df
 
 df = load_data(time_option)
 
 if df.empty:
-    st.warning("No data found for selected range")
+    st.warning("No data found")
     st.stop()
 
 # ===== SCORING =====
@@ -71,17 +73,15 @@ df["is_good"] = df["score"] >= 7
 # ===== GROUP METRICS =====
 avg_score = df.groupby("group_name")["score"].mean()
 quality_ratio = df.groupby("group_name")["is_good"].mean()
-
-# handle frequency safely
 group_counts = df.groupby("group_name").size()
 
 if time_option == "All time":
-    frequency = group_counts / 30  # normalize roughly
+    frequency = group_counts / 30
 else:
     days = int(time_option.split()[0])
     frequency = group_counts / days
 
-# normalize
+# NORMALIZE
 normalized_score = avg_score / 10
 frequency_norm = frequency / frequency.max()
 
@@ -121,9 +121,6 @@ st.bar_chart(final_score)
 # ===== TABLE =====
 st.subheader("📋 Detailed Breakdown")
 st.dataframe(summary)
-
-# ===== DEBUG (optional)
-st.write("Groups loaded:", df["group_name"].unique())
 
 # ===== DEEP DIVE =====
 st.subheader("🔍 Group Deep Dive")
