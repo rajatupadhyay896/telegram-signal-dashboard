@@ -1,93 +1,93 @@
-import psycopg2
+import streamlit as st
 import pandas as pd
+import psycopg2
 import os
-from datetime import timedelta
+
+# ===== CONFIG =====
+st.set_page_config(layout="wide")
+st.title("📊 Telegram Signal Dashboard")
 
 DB_URL = os.getenv("DB_URL")
 
-conn = psycopg2.connect(DB_URL)
+# ===== LOAD DATA =====
+@st.cache_data(ttl=60)
+def load_data():
+    conn = psycopg2.connect(DB_URL)
+    df = pd.read_sql("SELECT * FROM signals", conn)
+    conn.close()
+    return df
 
-# ===== LOAD SIGNALS =====
-df = pd.read_sql("""
-SELECT id, timestamp, option_type
-FROM signals
-WHERE result IS NULL
-""", conn)
+df = load_data()
 
 if df.empty:
-    print("No new signals")
-    exit()
+    st.warning("No data available")
+    st.stop()
 
-# ===== GET PRICE DATA =====
-data = yf.download("^NSEI", period="5d", interval="5m")
-data.reset_index(inplace=True)
+# ===== SIDEBAR FILTERS =====
+st.sidebar.header("Filters")
 
-# normalize datetime
-if "Datetime" not in data.columns:
-    data.rename(columns={"Date": "Datetime"}, inplace=True)
+groups = st.sidebar.multiselect(
+    "Select Groups",
+    options=df["group_name"].unique(),
+    default=df["group_name"].unique()
+)
 
-data["Datetime"] = pd.to_datetime(data["Datetime"])
+days = st.sidebar.slider("Last N Days", 1, 30, 7)
 
-# 🔥 FIX: remove timezone for comparison
-data["Datetime"] = data["Datetime"].dt.tz_localize(None)
+# ===== APPLY FILTERS =====
+df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-# ===== FUNCTION =====
-def evaluate(row):
-    try:
-        signal_time = pd.to_datetime(row["timestamp"])
+df = df[
+    (df["group_name"].isin(groups)) &
+    (df["timestamp"] >= pd.Timestamp.now() - pd.Timedelta(days=days))
+]
 
-        signal_date = signal_time.date()
+# ===== METRICS =====
+col1, col2, col3 = st.columns(3)
 
-        entry_candidates = data[data["Datetime"].dt.date >= signal_date]
+col1.metric("Total Signals", len(df))
+col2.metric("Unique Groups", df["group_name"].nunique())
+col3.metric("Latest Signal", str(df["timestamp"].max())[:19])
 
-        if entry_candidates.empty:
-            return "UNKNOWN", 0
+# ===== SIGNAL VOLUME =====
+st.subheader("📈 Signal Volume by Group")
+st.bar_chart(df["group_name"].value_counts())
 
-        entry_row = entry_candidates.iloc[0]
+# ===== SIGNAL QUALITY SCORE =====
+df["score"] = (
+    df["option_type"].notna().astype(int) * 2 +
+    df["strike"].notna().astype(int) * 2 +
+    df["has_target"].fillna(False).astype(int) * 2 +
+    df["has_sl"].fillna(False).astype(int) * 2 +
+    (df["is_buy"].fillna(False) | df["is_sell"].fillna(False)).astype(int)
+)
 
-        exit_candidates = data[data["Datetime"].dt.date > entry_row["Datetime"].date()]
+quality = df.groupby("group_name")["score"].mean().sort_values(ascending=False)
 
-        if exit_candidates.empty:
-            return "UNKNOWN", 0
+st.subheader("⭐ Signal Quality Score")
+st.bar_chart(quality)
 
-        exit_row = exit_candidates.iloc[0]
+# ===== PTS (if exists) =====
+if "pnl" in df.columns and "result" in df.columns:
 
-        entry = entry_row["Close"]
-        exit_price = exit_row["Close"]
+    st.subheader("💰 Profit Tracking System")
 
-        change = float((exit_price - entry) / entry)
+    pnl_summary = df.groupby("group_name")["pnl"].mean()
+    win_rate = df.groupby("group_name")["result"].apply(
+        lambda x: (x == "WIN").mean()
+    )
 
-        if row["option_type"] == "PE":
-            change = -change
+    pts_df = pd.DataFrame({
+        "Win Rate": win_rate,
+        "Avg PnL": pnl_summary
+    }).sort_values("Avg PnL", ascending=False)
 
-        if change > 0.003:
-            return "WIN", change
-        elif change < -0.003:
-            return "LOSS", change
-        else:
-            return "NEUTRAL", change
+    st.dataframe(pts_df)
+    st.bar_chart(pts_df["Avg PnL"])
 
-    except Exception:
-        return "UNKNOWN", 0
-
-# ===== APPLY =====
-results = df.apply(evaluate, axis=1)
-
-df["result"] = results.apply(lambda x: x[0])
-df["pnl"] = results.apply(lambda x: x[1])
-
-# ===== UPDATE DB =====
-cursor = conn.cursor()
-
-for _, row in df.iterrows():
-    cursor.execute("""
-        UPDATE signals
-        SET result = %s, pnl = %s
-        WHERE id = %s
-    """, (row["result"], row["pnl"], row["id"]))
-
-conn.commit()
-cursor.close()
-conn.close()
-
-print("PTS updated (fixed)")
+# ===== RECENT SIGNALS =====
+st.subheader("📋 Recent Signals")
+st.dataframe(
+    df.sort_values("timestamp", ascending=False).head(100),
+    use_container_width=True
+)
