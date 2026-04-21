@@ -5,7 +5,7 @@ import os
 
 # ===== CONFIG =====
 st.set_page_config(layout="wide")
-st.title("📊 Telegram Signal Dashboard")
+st.title("📊 Telegram Signal Quality Dashboard")
 
 DB_URL = os.getenv("DB_URL")
 
@@ -23,7 +23,7 @@ if df.empty:
     st.warning("No data available")
     st.stop()
 
-# ===== SIDEBAR =====
+# ===== FILTERS =====
 st.sidebar.header("Filters")
 
 groups = st.sidebar.multiselect(
@@ -34,7 +34,6 @@ groups = st.sidebar.multiselect(
 
 days = st.sidebar.slider("Last N Days", 1, 30, 7)
 
-# ===== FILTER =====
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 df = df[
@@ -42,18 +41,7 @@ df = df[
     (df["timestamp"] >= pd.Timestamp.now() - pd.Timedelta(days=days))
 ]
 
-# ===== METRICS =====
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Total Signals", len(df))
-col2.metric("Unique Groups", df["group_name"].nunique())
-col3.metric("Latest Signal", str(df["timestamp"].max())[:19])
-
-# ===== SIGNAL VOLUME =====
-st.subheader("📈 Signal Volume by Group")
-st.bar_chart(df["group_name"].value_counts())
-
-# ===== QUALITY SCORE =====
+# ===== SIGNAL SCORE =====
 df["score"] = (
     df["option_type"].notna().astype(int) * 2 +
     df["strike"].notna().astype(int) * 2 +
@@ -62,14 +50,69 @@ df["score"] = (
     (df["is_buy"].fillna(False) | df["is_sell"].fillna(False)).astype(int)
 )
 
-quality = df.groupby("group_name")["score"].mean().sort_values(ascending=False)
+# ===== GROUP METRICS =====
+grouped = df.groupby("group_name")
 
-st.subheader("⭐ Signal Quality Score")
-st.bar_chart(quality)
+summary = pd.DataFrame({
+    "avg_score": grouped["score"].mean(),
+    "total_signals": grouped.size(),
+    "signals_per_day": grouped.size() / days,
+    "structured_ratio": grouped["score"].apply(lambda x: (x >= 6).mean())
+})
 
-# ===== BEST GROUPS =====
-st.subheader("🏆 Top Groups (by Quality)")
-st.dataframe(quality.reset_index().rename(columns={"score": "avg_score"}))
+# ===== NORMALIZATION =====
+summary["freq_norm"] = summary["signals_per_day"] / summary["signals_per_day"].max()
+summary["quality_norm"] = summary["avg_score"] / summary["avg_score"].max()
+
+# ===== FINAL SCORE (SMART) =====
+summary["final_score"] = (
+    summary["quality_norm"] * 0.5 +
+    summary["structured_ratio"] * 0.3 +
+    summary["freq_norm"] * 0.2
+)
+
+summary = summary.sort_values("final_score", ascending=False)
+
+# ===== TOP METRICS =====
+col1, col2, col3 = st.columns(3)
+
+top_group = summary.index[0]
+best_score = summary["final_score"].iloc[0]
+
+col1.metric("🏆 Top Group", top_group)
+col2.metric("⭐ Best Score", round(best_score, 3))
+col3.metric("📊 Total Groups", len(summary))
+
+st.markdown("---")
+
+# ===== FINAL RANKING =====
+st.subheader("🏆 Final Ranking")
+st.dataframe(summary[["final_score"]])
+
+# ===== VISUALIZATION =====
+st.subheader("📊 Ranking Visualization")
+st.bar_chart(summary["final_score"])
+
+# ===== DETAILED BREAKDOWN =====
+st.subheader("📋 Detailed Breakdown")
+st.dataframe(summary)
+
+# ===== GROUP DEEP DIVE =====
+st.subheader("🔍 Group Deep Dive")
+
+selected_group = st.selectbox(
+    "Select Group",
+    options=summary.index
+)
+
+group_data = summary.loc[selected_group]
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Avg Score", round(group_data["avg_score"], 2))
+col2.metric("Structured Ratio", round(group_data["structured_ratio"], 2))
+col3.metric("Signals/Day", round(group_data["signals_per_day"], 2))
+col4.metric("Final Score", round(group_data["final_score"], 3))
 
 # ===== RECENT SIGNALS =====
 st.subheader("📋 Recent Signals")
